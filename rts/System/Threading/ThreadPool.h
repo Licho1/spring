@@ -14,7 +14,8 @@ namespace ThreadPool {
 		f(args ...);
 	}
 
-	static inline void InitWorkerThreads() {}
+	static inline void SetMaxThreadCount() {}
+	static inline void SetDefaultThreadCount() {}
 	static inline void SetThreadCount(int num) {}
 	static inline int GetThreadNum() { return 0; }
 	static inline int GetMaxThreads() { return 1; }
@@ -84,9 +85,7 @@ class ITaskGroup
 {
 public:
 	ITaskGroup(const bool getid = true) : id(getid ? lastId.fetch_add(1) : -1) {
-		remainingTasks = 0;
-		wantedThread = 0;
-		inTaskQueue = 1;
+		ResetState();
 	}
 
 	virtual ~ITaskGroup() {
@@ -98,7 +97,7 @@ public:
 	virtual bool ExecuteStep() = 0;
 	virtual bool SelfDelete() const { return false; }
 
-	spring_time ExecuteLoop() {
+	spring_time ExecuteLoop(bool wffCall) {
 		const spring_time t0 = spring_now();
 
 		while (ExecuteStep());
@@ -106,8 +105,11 @@ public:
 		const spring_time t1 = spring_now();
 		const spring_time dt = t1 - t0;
 
-		assert(inTaskQueue.load() == 1);
-		inTaskQueue.store(0);
+		if (!wffCall) {
+			// do not set this from WFF, defeats the purpose
+			assert(inTaskQueue.load() == 1);
+			inTaskQueue.store(0);
+		}
 
 		if (SelfDelete())
 			delete this;
@@ -129,6 +131,12 @@ public:
 
 	unsigned GetId() const { return id; }
 	void UpdateId() { id = lastId.fetch_add(1); }
+
+	void ResetState() {
+		remainingTasks = 0;
+		wantedThread = 0;
+		inTaskQueue = 1;
+	}
 
 public:
 	std::atomic_int remainingTasks;
@@ -156,7 +164,8 @@ namespace ThreadPool {
 	template<typename T>
 	inline void WaitForFinished(std::shared_ptr<T>& taskGroup) { WaitForFinished(std::move(std::static_pointer_cast<ITaskGroup>(taskGroup))); }
 
-	void InitWorkerThreads();
+	void SetMaxThreadCount();
+	void SetDefaultThreadCount();
 	void SetThreadCount(int num);
 	int GetThreadNum();
 	bool HasThreads();
@@ -479,23 +488,26 @@ public:
 
 template <template<typename> class TG, typename F>
 struct TaskPool {
-	typedef TG<F> I;
-	typedef std::shared_ptr<I> P;
+	typedef TG<F> FuncTaskGroup;
+	typedef std::shared_ptr<FuncTaskGroup> FuncTaskGroupPtr;
 
-	std::array<P, 256> cp;
+	// more than 256 nested for_mt's or parallel's should be uncommon
+	std::array<FuncTaskGroupPtr, 256> tgPool;
 	std::atomic_int pos = {0};
 
 	TaskPool() {
-		for (int i = 0; i<256; ++i) {
-			cp[i] = P(new I);
+		for (int i = 0; i < tgPool.size(); ++i) {
+			tgPool[i] = FuncTaskGroupPtr(new FuncTaskGroup());
 		}
 	}
 
 
-	P Get() {
-		auto v = cp[pos.fetch_add(1) % 256];
-		assert(!v || v->IsFinished());
-		return v;
+	FuncTaskGroupPtr GetTaskGroup() {
+		auto tg = tgPool[pos.fetch_add(1) % tgPool.size()];
+
+		assert(tg->IsFinished());
+		tg->ResetState();
+		return tg;
 	}
 };
 
@@ -517,8 +529,11 @@ static inline void for_mt(int start, int end, int step, F&& f)
 	}
 
 	SCOPED_MT_TIMER("::ThreadWorkers (real)");
-	static TaskPool<ForTaskGroup,F> pool;
-	auto taskGroup = pool.Get();
+
+	// static, so TaskGroup's are recycled
+	static TaskPool<ForTaskGroup, F> pool;
+	auto taskGroup = pool.GetTaskGroup();
+
 	taskGroup->Enqueue(start, end, step, f);
 	taskGroup->UpdateId();
 	ThreadPool::PushTaskGroup(taskGroup);
@@ -539,8 +554,11 @@ static inline void parallel(F&& f)
 		return f();
 
 	SCOPED_MT_TIMER("::ThreadWorkers (real)");
+
+	// static, so TaskGroup's are recycled
 	static TaskPool<Parallel2TaskGroup, F> pool;
-	auto taskGroup = pool.Get();
+	auto taskGroup = pool.GetTaskGroup();
+
 	taskGroup->Enqueue(f);
 	taskGroup->UpdateId();
 	ThreadPool::PushTaskGroup(taskGroup);
@@ -557,7 +575,7 @@ static inline auto parallel_reduce(F&& f, G&& g) -> typename std::result_of<F()>
 	SCOPED_MT_TIMER("::ThreadWorkers (real)");
 
 	typedef  typename std::result_of<F()>::type  RetType;
-	typedef  typename std::shared_ptr< SingleTask<F> >  TaskType;
+	// typedef  typename std::shared_ptr< SingleTask<F> >  TaskType;
 	typedef           std::shared_ptr< std::future<RetType> >  FoldType;
 
 	// std::vector<TaskType> tasks(ThreadPool::GetNumThreads());
@@ -575,7 +593,7 @@ static inline auto parallel_reduce(F&& f, G&& g) -> typename std::result_of<F()>
 	results[0] = std::move(tasks[0]->GetFuture());
 
 	// first job usually wants to run on the main thread
-	tasks[0]->ExecuteLoop();
+	tasks[0]->ExecuteLoop(false);
 
 	// need to push N individual tasks; see NOTE in TParallelTaskGroup
 	for (size_t i = 1; i < results.size(); ++i) {

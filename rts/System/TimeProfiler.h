@@ -3,6 +3,7 @@
 #ifndef TIME_PROFILER_H
 #define TIME_PROFILER_H
 
+#include <atomic>
 #include <cstring> // memset
 #include <string>
 #include <deque>
@@ -52,6 +53,7 @@ public:
 
 private:
 	const bool autoShowGraph;
+	const bool specialTimer;
 };
 
 
@@ -97,10 +99,18 @@ public:
 	static CTimeProfiler& GetInstance();
 
 	float GetPercent(const char* name);
+	float GetPercentRaw(const char* name) { return profile[name].percent; }
+
+	void ResetState();
 
 	void Update();
-	void UpdateSorted(bool resort);
+	void UpdateRaw();
 
+	void ResortProfilesRaw();
+	void RefreshProfiles();
+	void RefreshProfilesRaw();
+
+	void SetEnabled(bool b) { enabled = b; }
 	void PrintProfilingInfo() const;
 
 	void AddTime(
@@ -108,7 +118,15 @@ public:
 		const spring_time startTime,
 		const spring_time deltaTime,
 		const bool showGraph = false,
+		const bool specialTimer = false,
 		const bool threadTimer = false
+	);
+	void AddTimeRaw(
+		const std::string& name,
+		const spring_time startTime,
+		const spring_time deltaTime,
+		const bool showGraph,
+		const bool threadTimer
 	);
 
 public:
@@ -156,6 +174,9 @@ private:
 	/// increases each update, from 0 to (numFrames-1)
 	unsigned currentPosition;
 	unsigned resortProfiles;
+
+	// if false, AddTime is a no-op for (almost) all timers
+	std::atomic<bool> enabled;
 };
 
 #define profiler (CTimeProfiler::GetInstance())

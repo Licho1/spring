@@ -1173,6 +1173,8 @@ public:
 		globalRendering->drawdebug = !globalRendering->drawdebug;
 
 		ProfileDrawer::SetEnabled(globalRendering->drawdebug);
+		profiler.SetEnabled(globalRendering->drawdebug);
+
 		LogSystemStatus("debug-info rendering mode", globalRendering->drawdebug);
 		return true;
 	}
@@ -1741,8 +1743,9 @@ public:
 			return false;
 
 		// already shown?
-		const std::list<CInputReceiver*>& inputReceivers = GetInputReceivers();
-		if (inputReceivers.empty() || (dynamic_cast<CShareBox*>(inputReceivers.front()) != NULL))
+		const auto& inputReceivers = CInputReceiver::GetReceivers();
+
+		if (inputReceivers.empty() || (dynamic_cast<CShareBox*>(inputReceivers.front()) != nullptr))
 			return false;
 
 		new CShareBox();
@@ -1759,12 +1762,14 @@ public:
 
 	bool Execute(const UnsyncedAction& action) const {
 		// already shown?
-		std::list<CInputReceiver*>& inputReceivers = GetInputReceivers();
-		if  (inputReceivers.empty() || dynamic_cast<CQuitBox*>(inputReceivers.front()))
+		const auto& inputReceivers = CInputReceiver::GetReceivers();
+
+		if (inputReceivers.empty() || dynamic_cast<CQuitBox*>(inputReceivers.front()) != nullptr)
 			return false;
 
 		const CKeyBindings::HotkeyList& quitList = keyBindings->GetHotkeys("quitmenu");
-		const std::string quitKey = quitList.empty() ? "<none>" : *quitList.begin();
+		const std::string& quitKey = quitList.empty() ? "<none>" : *quitList.begin();
+
 		LOG("Press %s to access the quit menu", quitKey.c_str());
 		return true;
 	}
@@ -1779,8 +1784,9 @@ public:
 
 	bool Execute(const UnsyncedAction& action) const {
 		// already shown?
-		std::list<CInputReceiver*>& inputReceivers = GetInputReceivers();
-		if (inputReceivers.empty() || dynamic_cast<CQuitBox*>(inputReceivers.front()))
+		const auto& inputReceivers = CInputReceiver::GetReceivers();
+
+		if (inputReceivers.empty() || dynamic_cast<CQuitBox*>(inputReceivers.front()) != nullptr)
 			return false;
 
 		new CQuitBox();

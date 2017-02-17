@@ -121,9 +121,7 @@ void CUnitTracker::MakeTrackGroup()
 	smoothedRight = RgtVector;
 	trackGroup.clear();
 
-	const auto& selUnits = selectedUnitsHandler.selectedUnits;
-
-	for (const int unitID: selUnits) {
+	for (const int unitID: selectedUnitsHandler.selectedUnits) {
 		trackGroup.insert(unitID);
 	}
 }
@@ -131,30 +129,26 @@ void CUnitTracker::MakeTrackGroup()
 
 void CUnitTracker::CleanTrackGroup()
 {
-	std::set<int>::iterator it = trackGroup.begin();
+	std::vector<int> deadUnitIDs;
 
-	while (it != trackGroup.end()) {
-		if (unitHandler->GetUnitUnsafe(*it) != NULL) {
-			++it;
-			continue;
-		}
-		std::set<int>::iterator it_next = it;
-		++it_next;
-		if (trackUnit == *it) {
-			if (it_next == trackGroup.end()) {
-				trackUnit = *trackGroup.begin();
-			} else {
-				trackUnit = *it_next;
-			}
-		}
-		trackGroup.erase(it);
-		it = it_next;
+	deadUnitIDs.clear();
+	deadUnitIDs.reserve(trackGroup.size());
+
+	for (const int unitID: trackGroup) {
+		if (unitHandler->GetUnitUnsafe(unitID) == nullptr)
+			deadUnitIDs.push_back(unitID);
+	}
+
+	for (const int deadUnitID: deadUnitIDs) {
+		trackGroup.erase(deadUnitID);
 	}
 
 	if (trackGroup.empty()) {
 		Disable();
+		return;
 	}
-	else if (trackGroup.find(trackUnit) == trackGroup.end()) {
+	// reset trackUnit if it was erased above
+	if (trackGroup.find(trackUnit) == trackGroup.end()) {
 		trackUnit = *trackGroup.begin();
 	}
 }
@@ -162,22 +156,21 @@ void CUnitTracker::CleanTrackGroup()
 
 void CUnitTracker::NextUnit()
 {
-	if (trackGroup.empty()) {
+	if (trackGroup.empty())
+		return;
+
+	auto it = trackGroup.find(trackUnit);
+
+	if (it == trackGroup.end()) {
+		trackUnit = *trackGroup.begin();
 		return;
 	}
 
-	std::set<int>::iterator it = trackGroup.find(trackUnit);
-	if (it == trackGroup.end()) {
+	if ((++it) == trackGroup.end()) {
 		trackUnit = *trackGroup.begin();
-	}
-	else {
-		++it;
-		if (it == trackGroup.end()) {
-			trackUnit = *trackGroup.begin();
-			Disable();
-		} else {
-			trackUnit = *it;
-		}
+		Disable();
+	} else {
+		trackUnit = *it;
 	}
 }
 
@@ -198,8 +191,8 @@ CUnit* CUnitTracker::GetTrackUnit()
 float3 CUnitTracker::CalcAveragePos() const
 {
 	float3 p(ZeroVector);
-	std::set<int>::const_iterator it;
-	for (it = trackGroup.begin(); it != trackGroup.end(); ++it) {
+
+	for (auto it = trackGroup.cbegin(); it != trackGroup.cend(); ++it) {
 		p += unitHandler->GetUnitUnsafe(*it)->drawPos;
 	}
 	p /= (float)trackGroup.size();
@@ -211,8 +204,8 @@ float3 CUnitTracker::CalcExtentsPos() const
 {
 	float3 minPos(+1e9f, +1e9f, +1e9f);
 	float3 maxPos(-1e9f, -1e9f, -1e9f);
-	std::set<int>::const_iterator it;
-	for (it = trackGroup.begin(); it != trackGroup.end(); ++it) {
+
+	for (auto it = trackGroup.cbegin(); it != trackGroup.cend(); ++it) {
 		const float3& p = unitHandler->GetUnitUnsafe(*it)->drawPos;
 
 		if (p.x < minPos.x) { minPos.x = p.x; }
